@@ -13,7 +13,6 @@ __pycache__/
 # Ignore data exports and backups
 *.xlsx
 *.csv
-*.gpkg
 *.Rproj
 *.txt
 
