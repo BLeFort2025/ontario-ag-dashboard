@@ -1,3 +1,4 @@
+import os
 import re
 import pandas as pd
 import geopandas as gpd
@@ -7,9 +8,10 @@ import pydeck as pdk
 # ── Page config
 st.set_page_config("Ontario Ag Census Dashboard", layout="wide")
 
-# ── File paths
-CENSUS_PATH    = r"C:\ag_dash\agcensus_wide.csv"
-SHAPEFILE_PATH = r"C:\ag_dash\Ontario_Census_Divisions_simp.gpkg"
+# ── File paths (relative)
+BASE = os.path.dirname(__file__)
+CENSUS_PATH    = os.path.join(BASE, "data", "agcensus_wide.csv")
+SHAPEFILE_PATH = os.path.join(BASE, "data", "Ontario_Census_Divisions_simp.gpkg")
 
 # ── Helpers
 def normalize_key(name):
@@ -83,13 +85,9 @@ high_col = make_color(max_val)
 legend_html = f"""
 <div style="display:flex; align-items:center; margin:10px 0;">
   <span style="margin-right:10px;">{min_val:,.0f}</span>
-  <div style="flex:1; height:12px; 
-              background: linear-gradient(
-                to right, 
-                rgb({low_col[0]},{low_col[1]},{low_col[2]}), 
-                rgb({high_col[0]},{high_col[1]},{high_col[2]})
-              );">
-  </div>
+  <div style="flex:1; height:12px; background: linear-gradient(to right,
+       rgb({low_col[0]},{low_col[1]},{low_col[2]}),
+       rgb({high_col[0]},{high_col[1]},{high_col[2]}));"></div>
   <span style="margin-left:10px;">{max_val:,.0f}</span>
 </div>
 """
