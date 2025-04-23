@@ -1,0 +1,15 @@
+# Ignore Python virtual environments
+ag_env/
+.venv/
+venv/
+
+# Byte-compiled Python
+__pycache__/
+*.py[cod]
+
+# Streamlit history
+.streamlit/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
