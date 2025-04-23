@@ -10,6 +10,22 @@ __pycache__/
 # Streamlit history
 .streamlit/
 
+# Ignore data exports and backups
+*.xlsx
+*.csv
+*.gpkg
+*.Rproj
+*.txt
+
+# Ignore old/test scripts
+hello_test.py
+test_*.py
+ontario_ag_dash.py
+ag_dashboard_clean_debug.py
+ag_dashboard_diagnostics.py
+validate_inputs.py
+Column.py
+
 # OS artifacts
 .DS_Store
 Thumbs.db
