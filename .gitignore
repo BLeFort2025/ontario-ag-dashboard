@@ -12,7 +12,10 @@ __pycache__/
 
 # Ignore data exports and backups
 *.xlsx
+# Ignore all CSV except our census file
 *.csv
+!data/agcensus_wide.csv
+
 *.Rproj
 *.txt
 
