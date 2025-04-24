@@ -8,10 +8,34 @@ import pydeck as pdk
 # ── Page config
 st.set_page_config("Ontario Ag Census Dashboard", layout="wide")
 
-# ── File paths (relative)
-BASE = os.path.dirname(__file__)
-CENSUS_PATH    = os.path.join(BASE, "data", "agcensus_wide.csv")
-SHAPEFILE_PATH = os.path.join(BASE, "data", "Ontario_Census_Divisions_simp.gpkg")
+# ── CSS to shrink & widen both the selectbox and its dropdown items
+st.markdown(
+    """
+    <style>
+    /* Selected value */
+    [data-baseweb="select"] > div {
+      font-size: 12px !important;
+      min-width: 300px !important;
+    }
+    /* Dropdown container */
+    div[role="listbox"] {
+      max-width: 300px !important;
+    }
+    /* Dropdown items */
+    div[role="listbox"] [role="option"] {
+      font-size: 12px !important;
+      white-space: normal !important;
+      line-height: 1.2em !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ── File paths
+BASE         = os.path.dirname(__file__)
+CENSUS_PATH  = os.path.join(BASE, "data", "agcensus_wide.parquet")
+GEOJSON_PATH = os.path.join(BASE, "data", "divisions_simp.geojson")
 
 # ── Helpers
 def normalize_key(name):
@@ -21,14 +45,15 @@ def normalize_key(name):
 
 @st.cache_data(show_spinner=False)
 def load_shapefile(path):
-    gdf = gpd.read_file(path).to_crs(epsg=4326)
-    gdf["geometry"] = gdf["geometry"].simplify(tolerance=0.01, preserve_topology=True)
+    # Read our pre-simplified GeoJSON
+    gdf = gpd.read_file(path)
     gdf["join_key"] = gdf["Municipality_Clean"].apply(normalize_key)
-    return gdf
+    return gdf[["Municipality_Clean", "geometry", "join_key"]]
 
 @st.cache_data(show_spinner=False)
 def load_census(path):
-    df = pd.read_csv(path)
+    # Now read Parquet instead of CSV for speed
+    df = pd.read_parquet(path)
     df["join_key"] = df["join_key"].apply(normalize_key)
     df_long = df.melt(
         id_vars="join_key",
@@ -40,91 +65,111 @@ def load_census(path):
     return df_long
 
 # ── Load data
-gdf     = load_shapefile(SHAPEFILE_PATH)
+gdf     = load_shapefile(GEOJSON_PATH)
 df_long = load_census(CENSUS_PATH)
 
-# ── Sidebar filters
+# ── Cached GeoJSON builder
+@st.cache_data(show_spinner=False)
+def build_geojson(year: str, variable: str):
+    df_filt = df_long.query("year == @year and variable == @variable")[["join_key","value"]]
+    df_filt = df_filt[df_filt["value"].notna()]
+    g = gdf.merge(df_filt, on="join_key", how="inner").copy()
+
+    vmin = df_filt["value"].min()
+    vmax = df_filt["value"].max()
+    def _make_color(v):
+        norm = (v - vmin) / (vmax - vmin) if vmax > vmin else 0
+        return [
+            int(255 * (0.3 + 0.7 * norm)),
+            int(255 * (0.8 - 0.8 * norm)),
+            0,
+            180
+        ]
+
+    features = []
+    for _, row in g.iterrows():
+        features.append({
+            "type": "Feature",
+            "geometry": row.geometry.__geo_interface__,
+            "properties": {
+                "Municipality_Clean": row.Municipality_Clean,
+                "value_fmt": f"{int(row.value):,}",
+                "fill_color": _make_color(row.value)
+            }
+        })
+    return {"type": "FeatureCollection", "features": features}
+
+# ── Sidebar filters with sticky variable
 st.sidebar.title("Filters")
-year     = st.sidebar.selectbox("Year", sorted(df_long["year"].dropna().unique()))
+years = sorted(df_long["year"].dropna().unique())
+year  = st.sidebar.selectbox("Year", years, key="year")
+
+vars_for_year = sorted(df_long.query("year == @year")["variable"].dropna().unique())
+if "variable" not in st.session_state:
+    st.session_state.variable = vars_for_year[0] if vars_for_year else None
+if st.session_state.variable not in vars_for_year:
+    st.session_state.variable = vars_for_year[0] if vars_for_year else None
+
 variable = st.sidebar.selectbox(
     "Variable",
-    sorted(df_long.query("year == @year")["variable"].dropna().unique())
+    vars_for_year,
+    index=vars_for_year.index(st.session_state.variable),
+    key="variable"
 )
 
-# ── Prepare data
+# ── Compute legend bounds
 filtered = df_long.query("year == @year and variable == @variable")[["join_key","value"]]
-full = (
-    gdf[["join_key","Municipality_Clean","geometry"]]
-    .merge(filtered, on="join_key", how="left")
-)
-
-# ── Color ramp helper
-vmin, vmax = filtered["value"].min(), filtered["value"].max()
-def make_color(v):
-    if pd.isna(v):
-        return [200, 200, 200, 50]
-    norm = (v - vmin) / (vmax - vmin)
-    r = int(255 * (0.3 + 0.7 * norm))
-    g = int(255 * (0.8 - 0.8 * norm))
-    b = 0
-    return [r, g, b, 180]
-
-full["fill_color"] = full["value"].apply(make_color)
-full["value_fmt"]  = full["value"].apply(lambda v: f"{v:,.0f}" if pd.notna(v) else "N/A")
+vmin = filtered["value"].min()
+vmax = filtered["value"].max()
 
 # ── Header
 st.title("🚜 Ontario Agricultural Census Dashboard")
 st.subheader(f"Year: {year} | Variable: {variable.replace('_',' ').title()}")
 
 # ── Color bar legend
-min_val = filtered["value"].min()
-max_val = filtered["value"].max()
-low_col = make_color(min_val)
-high_col = make_color(max_val)
-
+low_rgb  = [int(255*(0.3+0.7*0))]*3 if vmin == vmax else [
+    int(255*(0.3+0.7*((vmin-vmin)/(vmax-vmin)))),
+    int(255*(0.8-0.8*((vmin-vmin)/(vmax-vmin)))),
+    0
+]
+high_rgb = [
+    int(255*(0.3+0.7*1)),
+    int(255*(0.8-0.8*1)),
+    0
+]
 legend_html = f"""
 <div style="display:flex; align-items:center; margin:10px 0;">
-  <span style="margin-right:10px;">{min_val:,.0f}</span>
-  <div style="flex:1; height:12px; background: linear-gradient(to right,
-       rgb({low_col[0]},{low_col[1]},{low_col[2]}),
-       rgb({high_col[0]},{high_col[1]},{high_col[2]}));"></div>
-  <span style="margin-left:10px;">{max_val:,.0f}</span>
+  <span style="margin-right:10px;">{vmin:,.0f}</span>
+  <div style="flex:1; height:12px; background:linear-gradient(to right,
+       rgb({low_rgb[0]},{low_rgb[1]},{low_rgb[2]}),
+       rgb({high_rgb[0]},{high_rgb[1]},{high_rgb[2]}));"></div>
+  <span style="margin-left:10px;">{vmax:,.0f}</span>
 </div>
 """
 st.markdown(legend_html, unsafe_allow_html=True)
 
-# ── Build Stamen “toner-lite” basemap + choropleth
+# ── Build map
 tile_layer = pdk.Layer(
-    "TileLayer",
-    data=None,
+    "TileLayer", None,
     get_tile_data="https://stamen-tiles.a.ssl.fastly.net/toner-lite/{z}/{x}/{y}.png",
-    tile_size=256,
-    opacity=0.7
+    tile_size=256, opacity=0.7
 )
-
+geojson = build_geojson(year, variable)
 choropleth = pdk.Layer(
-    "GeoJsonLayer",
-    data=full.__geo_interface__,
-    pickable=True,
-    stroked=True,
-    filled=True,
+    "GeoJsonLayer", geojson,
+    pickable=True, stroked=True, filled=True,
     get_fill_color="properties.fill_color",
-    get_line_color=[80, 80, 80, 200],
-    line_width_min_pixels=1,
+    get_line_color=[80,80,80,200], line_width_min_pixels=1
 )
-
 view_state = pdk.ViewState(latitude=50, longitude=-85, zoom=5)
-
 tooltip = {
     "html": "<b>Division:</b> {Municipality_Clean}<br/><b>Value:</b> {value_fmt}",
     "style": {"color": "white"}
 }
-
 deck = pdk.Deck(
     map_style=None,
     layers=[tile_layer, choropleth],
     initial_view_state=view_state,
     tooltip=tooltip
 )
-
 st.pydeck_chart(deck, use_container_width=True)
