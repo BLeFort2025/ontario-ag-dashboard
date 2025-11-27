@@ -173,3 +173,34 @@ deck = pdk.Deck(
     tooltip=tooltip
 )
 st.pydeck_chart(deck, use_container_width=True)
+
+# ── Data table for current view
+st.subheader("Data for selected year and variable")
+
+table_df = filtered[filtered["value"].notna()].merge(
+    gdf[["join_key", "Municipality_Clean"]], on="join_key", how="left"
+)
+table_df = table_df.assign(
+    **{
+        "Census division": table_df["Municipality_Clean"],
+        "Year": year,
+        "Variable": variable,
+        "Value": table_df["value"],
+    }
+)[["Census division", "Year", "Variable", "Value"]].sort_values("Census division")
+
+if table_df.empty:
+    st.info("No data available for the selected year and variable.")
+else:
+    st.dataframe(
+        table_df.style.format({"Value": "{:,.0f}"}), use_container_width=True
+    )
+
+    safe_var = re.sub(r"[^A-Za-z0-9]+", "_", variable)
+    csv_bytes = table_df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Download CSV",
+        csv_bytes,
+        file_name=f"ag_census_{year}_{safe_var}.csv",
+        mime="text/csv",
+    )
